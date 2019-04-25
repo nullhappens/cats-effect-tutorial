@@ -6,6 +6,8 @@ import cats.effect.concurrent.Semaphore
 import cats.implicits._
 import java.io._
 
+import scala.util.{Failure, Success, Try}
+
 object CopyFile extends IOApp {
 
   def copy[F[_]: Concurrent](origin: File, destination: File): F[Long] =
@@ -53,7 +55,7 @@ object CopyFile extends IOApp {
                            buffer: Array[Byte],
                            acc: Long): F[Long] =
     for {
-      amount <- Sync[F].delay(origin.read(buffer, 0, buffer.size))
+      amount <- Sync[F].delay(origin.read(buffer, 0, buffer.length))
       count <- if (amount > -1)
         Sync[F].delay(destination.write(buffer, 0, amount)) >> transmit(
           origin,
@@ -75,12 +77,12 @@ object CopyFile extends IOApp {
       _ <- if (args.length < 2)
         IO.raiseError(
           new IllegalArgumentException("Need origin and destination files"))
-      else if (args(0) == args(1))
+      else if (args.head == args(1))
         IO.raiseError(
           new IllegalArgumentException(
             "Origin and destination files are the same"))
       else IO.unit
-      orig = new File(args(0))
+      orig = new File(args.head)
       dest = new File(args(1))
       count <- copy[IO](orig, dest)
       _ <- IO(
