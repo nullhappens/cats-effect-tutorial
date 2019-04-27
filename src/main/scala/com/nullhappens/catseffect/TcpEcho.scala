@@ -11,40 +11,47 @@ import cats.implicits._
 object TcpEcho extends IOApp {
   def echoProtocol[F[_]: Sync](clientSocket: Socket): F[Unit] = {
 
-    def loop(reader: BufferedReader, writer: BufferedWriter): F[Unit] = for {
-      line <- Sync[F].delay(reader.readLine())
-      _ <- line match {
-        case "" => Sync[F].unit
-        case _ => Sync[F].delay{
-          writer.write(line)
-          writer.newLine()
-          writer.flush()
-        } >> loop(reader, writer)
-      }
-    } yield ()
+    def loop(reader: BufferedReader, writer: BufferedWriter): F[Unit] =
+      for {
+        line <- Sync[F].delay(reader.readLine())
+        _ <- line match {
+          case "" => Sync[F].unit
+          case _ =>
+            Sync[F].delay {
+              writer.write(line)
+              writer.newLine()
+              writer.flush()
+            } >> loop(reader, writer)
+        }
+      } yield ()
 
     def reader(clientSocket: Socket): Resource[F, BufferedReader] =
-      Resource.make{
-        Sync[F].delay(new BufferedReader(new InputStreamReader(clientSocket.getInputStream)))
-      }{ reader =>
+      Resource.make {
+        Sync[F].delay(
+          new BufferedReader(
+            new InputStreamReader(clientSocket.getInputStream)))
+      } { reader =>
         Sync[F].delay(reader.close()).handleErrorWith(_ => Sync[F].unit)
       }
 
     def writer(clientSocket: Socket): Resource[F, BufferedWriter] =
-      Resource.make{
-        Sync[F].delay(new BufferedWriter(new PrintWriter(clientSocket.getOutputStream)))
-      }{ writer =>
+      Resource.make {
+        Sync[F].delay(
+          new BufferedWriter(new PrintWriter(clientSocket.getOutputStream)))
+      } { writer =>
         Sync[F].delay(writer.close()).handleErrorWith(_ => Sync[F].unit)
       }
 
-    def readerWriter(clientSocket: Socket): Resource[F, (BufferedReader, BufferedWriter)] =
+    def readerWriter(
+        clientSocket: Socket): Resource[F, (BufferedReader, BufferedWriter)] =
       for {
         reader <- reader(clientSocket)
         writer <- writer(clientSocket)
       } yield (reader, writer)
 
-    readerWriter(clientSocket).use{ case (reader, writer) =>
-      loop(reader, writer)
+    readerWriter(clientSocket).use {
+      case (reader, writer) =>
+        loop(reader, writer)
     }
   }
 
@@ -54,21 +61,31 @@ object TcpEcho extends IOApp {
 
     for {
       _ <- Sync[F]
-          .delay(serverSocket.accept())
-          .bracketCase { socket =>
-            echoProtocol(socket)
-              .guarantee(close(socket))
-              .start
-          } { (socket, exit) =>
-            exit match {
-              case Completed => Sync[F].unit
-              case Error(_) | Canceled => close(socket)
-            }
+        .delay(serverSocket.accept())
+        .bracketCase { socket =>
+          echoProtocol(socket)
+            .guarantee(close(socket))
+            .start
+        } { (socket, exit) =>
+          exit match {
+            case Completed           => Sync[F].unit
+            case Error(_) | Canceled => close(socket)
           }
+        }
       _ <- serve(serverSocket)
     } yield ()
   }
 
-  override def run(args: List[String]): IO[ExitCode] =
-    IO.pure(ExitCode.Error)
+  override def run(args: List[String]): IO[ExitCode] = {
+    def close[F[_]: Sync](socket: ServerSocket): F[Unit] =
+      Sync[F].delay(socket.close()).handleErrorWith(_ => Sync[F].unit)
+
+    IO(new ServerSocket(args.headOption.map(_.toInt).getOrElse(5432)))
+      .bracket { serverSocket =>
+        serve[IO](serverSocket) >> IO.pure(ExitCode.Success)
+      } { serverSocket =>
+        close[IO](serverSocket) >> IO(println("Server finished"))
+      }
+  }
+
 }
